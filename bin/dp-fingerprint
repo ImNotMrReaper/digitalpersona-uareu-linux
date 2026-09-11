@@ -287,6 +287,7 @@ def verify_finger(bus, username: str, target: str):
     try:
         print("👉 Press your enrolled finger on the sensor...\n")
         arm(is_rearm=False)
+        GLib.timeout_add_seconds(30, lambda: (print("\n⏱️ Verification timed out (30s).\n"), loop.quit(), False)[2])
         loop.run()
     finally:
         try:
