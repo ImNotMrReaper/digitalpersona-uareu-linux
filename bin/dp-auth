@@ -15,6 +15,7 @@ import sys
 import os
 import signal
 import getpass
+import glob
 import gi
 
 gi.require_version("Gio", "2.0")
@@ -41,7 +42,40 @@ def get_friendly_name(name: str, path: str) -> str:
 
 
 def is_optical_device(name: str) -> bool:
-    return "Digital" in name or "uru4000" in name or "4500" in name or "4000" in name
+    name_lower = name.lower()
+    return "digital" in name_lower or "uru4000" in name_lower or "4500" in name_lower or "4000" in name_lower or "optical" in name_lower
+
+
+def is_internal_device(name: str, path: str) -> bool:
+    """Identify onboard / laptop integrated sensors (e.g. Goodix, Synaptics, Elan)."""
+    name_lower = name.lower()
+    if any(k in name_lower for k in ("goodix", "synaptics", "elan", "focaltech", "internal")):
+        return True
+    return not is_optical_device(name)
+
+
+def is_lid_closed() -> bool:
+    """Detect if laptop lid is closed via ACPI button state or logind."""
+    for p in glob.glob("/proc/acpi/button/lid/*/state"):
+        try:
+            with open(p, "r") as f:
+                if "closed" in f.read().lower():
+                    return True
+        except Exception:
+            pass
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        logind = Gio.DBusProxy.new_sync(
+            bus, Gio.DBusProxyFlags.NONE, None,
+            "org.freedesktop.login1", "/org/freedesktop/login1",
+            "org.freedesktop.DBus.Properties", None
+        )
+        val = logind.Get("(ss)", "org.freedesktop.login1.Manager", "LidClosed")
+        if val and bool(val.unpack()):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def main():
@@ -190,6 +224,11 @@ def main():
                 info["is_verifying"] = False
                 schedule_rearm(path)
 
+    # Lid state inspection (Laptop lid closed / docked mode)
+    lid_closed = is_lid_closed()
+    if lid_closed:
+        print("💻 Laptop lid is closed (docked mode) -> Bypassing keyboard sensor, arming external USB reader exclusively.", flush=True)
+
     # Initial device registration
     for path in device_paths:
         try:
@@ -198,6 +237,11 @@ def main():
                 FPRINT_SERVICE, path, DEVICE_INTERFACE, None
             )
             name = dev.get_cached_property("name").get_string()
+
+            # When laptop lid is closed, skip inaccessible onboard/keyboard sensors
+            if lid_closed and is_internal_device(name, path):
+                continue
+
             enrolled = dev.ListEnrolledFingers("(s)", username)
             if enrolled and len(enrolled) > 0:
                 dev.Claim("(s)", username)
@@ -219,6 +263,8 @@ def main():
             continue
 
     if not active_devices:
+        if lid_closed:
+            print("💻 Laptop lid is closed and no external USB fingerprint reader is connected. Falling back to password/face ID.", flush=True)
         sys.exit(2)
 
     # Initial arming
@@ -246,6 +292,11 @@ def main():
                         FPRINT_SERVICE, new_path, DEVICE_INTERFACE, None
                     )
                     new_name = new_dev.get_cached_property("name").get_string()
+
+                    # Ignore internal sensors hotplug if lid is closed
+                    if is_lid_closed() and is_internal_device(new_name, new_path):
+                        return
+
                     new_enrolled = new_dev.ListEnrolledFingers("(s)", username)
                     if new_enrolled and len(new_enrolled) > 0:
                         new_dev.Claim("(s)", username)

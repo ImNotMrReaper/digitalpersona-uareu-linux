@@ -23,6 +23,10 @@ Stock Linux `fprintd` and `libfprint` struggle with optical USB readers out-of-t
    - Upstream `pam_fprintd.so` only connects to a single sensor (whichever has more prints), ignoring secondary or external USB sensors.
    - **Solution:** `dp-auth` concurrently claims and listens to **all** connected sensors (laptop capacitive Match-On-Chip + external USB optical reader) with dynamic USB hotplugging.
 
+4. **Docked Mode / Laptop Lid-Closed Auto Fallback:**
+   - When a laptop lid is closed (docked mode with external monitors), the onboard keyboard fingerprint sensor is physically trapped inside. Upstream PAM tools hang or fail waiting for a touch on an enclosed sensor.
+   - **Solution:** `dp-auth` automatically checks ACPI lid state (`/proc/acpi/button/lid/*/state`) and `systemd-logind`. If the lid is closed, it bypasses the enclosed keyboard sensor and arms the external USB reader exclusively. If no USB reader is attached, it immediately exits code 2 so PAM falls back to Face ID or password with zero delay.
+
 ---
 
 ## 🚀 Quick Start & Installation
