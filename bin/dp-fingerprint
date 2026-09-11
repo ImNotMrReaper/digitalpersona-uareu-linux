@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+dp-fingerprint: Unified Biometric Manager for Digital Persona USB Readers & Host Sensors.
+"""
+
+import sys
+import os
+import argparse
+import getpass
+import gi
+
+gi.require_version("Gio", "2.0")
+gi.require_version("GLib", "2.0")
+from gi.repository import Gio, GLib
+
+FPRINT_SERVICE = "net.reactivated.Fprint"
+MANAGER_PATH = "/net/reactivated/Fprint/Manager"
+DEVICE_INTERFACE = "net.reactivated.Fprint.Device"
+
+VALID_FINGERS = [
+    "right-index-finger",
+    "right-thumb",
+    "right-middle-finger",
+    "right-ring-finger",
+    "right-little-finger",
+    "left-index-finger",
+    "left-thumb",
+    "left-middle-finger",
+    "left-ring-finger",
+    "left-little-finger"
+]
+
+
+def get_bus():
+    return Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+
+
+def get_devices(bus):
+    manager = Gio.DBusProxy.new_sync(
+        bus, Gio.DBusProxyFlags.NONE, None,
+        FPRINT_SERVICE, MANAGER_PATH, "net.reactivated.Fprint.Manager", None
+    )
+    result = manager.GetDevices()
+    if isinstance(result, (list, tuple)):
+        if len(result) > 0 and isinstance(result[0], (list, tuple)):
+            return list(result[0])
+        return list(result)
+    return []
+
+
+def get_device_proxy(bus, path):
+    return Gio.DBusProxy.new_sync(
+        bus, Gio.DBusProxyFlags.NONE, None,
+        FPRINT_SERVICE, path, DEVICE_INTERFACE, None
+    )
+
+
+def is_optical(name: str) -> bool:
+    return "Digital" in name or "uru4000" in name or "4500" in name or "4000" in name
+
+
+def list_devices(bus, username):
+    paths = get_devices(bus)
+    print("\n=======================================================")
+    print(" 🛡️  FINGERPRINT SENSORS & BIOMETRIC STATUS AUDIT")
+    print("=======================================================")
+    if not paths:
+        print("❌ No fingerprint devices found.")
+        return
+
+    dev_data = []
+    all_enrolled_fingers = set()
+
+    for path in paths:
+        proxy = get_device_proxy(bus, path)
+        name = proxy.get_cached_property("name").get_string()
+        num_stages = proxy.get_cached_property("num-enroll-stages").get_int32()
+        scan_type = proxy.get_cached_property("scan-type").get_string()
+
+        optical = is_optical(name)
+        dev_type = "USB External Reader (Optical)" if optical else "Laptop Built-in Sensor"
+
+        enrolled_list = []
+        try:
+            enrolled = proxy.ListEnrolledFingers("(s)", username)
+            if enrolled and len(enrolled) > 0:
+                enrolled_list = list(enrolled)
+                all_enrolled_fingers.update(enrolled_list)
+        except Exception:
+            pass
+
+        dev_data.append({
+            "path": path,
+            "name": name,
+            "dev_type": dev_type,
+            "optical": optical,
+            "stages": num_stages,
+            "scan_type": scan_type,
+            "enrolled": enrolled_list
+        })
+
+    for d in dev_data:
+        print(f"\n📍 Device: \033[1;35m{d['name']}\033[0m ({d['dev_type']})")
+        print(f"   D-Bus Path:      {d['path']}")
+        print(f"   Sensor Physics:  {d['scan_type'].title()} ({'Optical TIR Prism' if d['optical'] else 'Capacitive MOC'})")
+        print(f"   Enrollment:      {d['stages']} touches per finger")
+
+        if d["enrolled"]:
+            print(f"   Enrolled Prints for {username} ({len(d['enrolled'])} total):")
+            for f in d["enrolled"]:
+                print(f"     ✅ \033[1;32m{f}\033[0m")
+        else:
+            print("   Enrolled Prints: \033[1;33mNone (Not enrolled yet)\033[0m")
+
+        missing = all_enrolled_fingers - set(d["enrolled"])
+        if missing:
+            print(f"   \033[1;33m⚠️  Missing Fingers (Enrolled on other devices):\033[0m")
+            for mf in sorted(missing):
+                print(f"     ❌ \033[1;31m{mf}\033[0m")
+
+    print("\n-------------------------------------------------------")
+    has_discrepancy = any(len(all_enrolled_fingers - set(d["enrolled"])) > 0 for d in dev_data)
+    if has_discrepancy:
+        print("💡 \033[1;33mPARITY NOTICE:\033[0m Some fingers are missing on one of your sensors.")
+        print("   Run \033[1;32mdp-fingerprint sync\033[0m to enroll missing fingers!")
+    else:
+        print("🎉 \033[1;32mFULL PARITY:\033[0m All sensors share identical enrolled fingerprints.")
+    print("=======================================================\n")
+
+
+def resolve_device_path(bus, target: str) -> str:
+    paths = get_devices(bus)
+    if not paths:
+        return None
+
+    if target.lower() in ("usb", "digitalpersona", "external", "1", "optical"):
+        for p in paths:
+            proxy = get_device_proxy(bus, p)
+            name = proxy.get_cached_property("name").get_string()
+            if is_optical(name) or "1" in p:
+                return p
+        return paths[-1]
+
+    if target.lower() in ("laptop", "goodix", "builtin", "internal", "0", "moc"):
+        for p in paths:
+            proxy = get_device_proxy(bus, p)
+            name = proxy.get_cached_property("name").get_string()
+            if "Goodix" in name or "0" in p:
+                return p
+        return paths[0]
+
+    return paths[0]
+
+
+def enroll_finger(bus, username: str, target: str, finger: str):
+    path = resolve_device_path(bus, target)
+    if not path:
+        print("❌ Target device not found.")
+        sys.exit(1)
+
+    proxy = get_device_proxy(bus, path)
+    name = proxy.get_cached_property("name").get_string()
+    num_stages = proxy.get_cached_property("num-enroll-stages").get_int32()
+    optical = is_optical(name)
+
+    print(f"\n🔐 Starting Enrollment for \033[1;35m{username}\033[0m")
+    print(f"   Target Sensor:  \033[1;34m{name}\033[0m ({'Optical USB Reader' if optical else 'Laptop Sensor'})")
+    print(f"   Finger:         \033[1;32m{finger}\033[0m")
+    print(f"   Required Steps: {num_stages} clean touches")
+    if optical:
+        print("   💡 TIP: Press finger pad FIRMLY & FLAT on the illuminated glass prism.")
+    print("-------------------------------------------------------")
+
+    try:
+        proxy.Claim("(s)", username)
+    except Exception as e:
+        print(f"❌ Failed to claim device: {e}")
+        sys.exit(1)
+
+    loop = GLib.MainLoop()
+    current_stage = [1]
+    success = [False]
+
+    def on_enroll_status(proxy, sender, signal_name, parameters):
+        if signal_name != "EnrollStatus":
+            return
+        result, done = parameters.unpack()
+
+        if result == "enroll-stage-passed":
+            print(f"   ✅ Stage {current_stage[0]}/{num_stages} captured! (Lift finger and press again)")
+            current_stage[0] += 1
+        elif result == "enroll-retry-scan":
+            hint = "press finger firmly flat against illuminated glass prism" if optical else "touch firmly"
+            print(f"   ⚠️  Scan unclear. Please {hint}.")
+        elif result == "enroll-finger-not-centered":
+            print("   ⚠️  Center your finger on the sensor.")
+        elif result == "enroll-remove-and-retry":
+            print("   ⚠️  Lift finger completely and place it again.")
+        elif result == "enroll-completed":
+            print(f"\n🎉 \033[1;32mEnrollment Successfully Completed!\033[0m")
+            print(f"   \033[1;35m{finger}\033[0m is now registered on \033[1;34m{name}\033[0m.\n")
+            success[0] = True
+        elif result == "enroll-failed":
+            print(f"\n❌ \033[1;31mEnrollment Failed.\033[0m\n")
+
+        if done:
+            loop.quit()
+
+    sid = proxy.connect("g-signal", on_enroll_status)
+
+    try:
+        print(f">>> Blue LED is ON. Touch your {finger} firmly now (Stage 1/{num_stages}) <<<\n")
+        proxy.EnrollStart("(s)", finger)
+        loop.run()
+    finally:
+        try:
+            proxy.EnrollStop()
+        except Exception:
+            pass
+        try:
+            proxy.Release()
+        except Exception:
+            pass
+        proxy.disconnect(sid)
+
+    return success[0]
+
+
+def verify_finger(bus, username: str, target: str):
+    if target in ("both", "all"):
+        os.system(f"dp-auth {username}")
+        return
+
+    path = resolve_device_path(bus, target)
+    if not path:
+        print("❌ Target device not found.")
+        sys.exit(1)
+
+    proxy = get_device_proxy(bus, path)
+    name = proxy.get_cached_property("name").get_string()
+    optical = is_optical(name)
+
+    print(f"\n🔍 Testing Verification on \033[1;34m{name}\033[0m for {username}")
+    print("-------------------------------------------------------")
+
+    try:
+        proxy.Claim("(s)", username)
+    except Exception as e:
+        print(f"❌ Failed to claim device: {e}")
+        sys.exit(1)
+
+    loop = GLib.MainLoop()
+
+    def arm(is_rearm=False):
+        try:
+            try:
+                proxy.VerifyStop()
+            except Exception:
+                pass
+            proxy.VerifyStart("(s)", "")
+            if is_rearm and optical:
+                print("💡 Sensor relit & ready for scan.", flush=True)
+        except Exception as e:
+            print(f"⚠️ Arm error: {e}", flush=True)
+
+    def on_verify_status(proxy, sender, signal_name, parameters):
+        if signal_name == "VerifyStatus":
+            result, done = parameters.unpack()
+            if result == "verify-match":
+                print("\n🎉 \033[1;32mVERIFICATION SUCCESS: Fingerprint Matched!\033[0m\n")
+                loop.quit()
+            elif result == "verify-no-match":
+                print("⚠️ Did not match. Sensor relit — try scanning again!", flush=True)
+                if done:
+                    GLib.timeout_add(50, lambda: [arm(is_rearm=True), False][1])
+            elif result == "verify-retry-scan":
+                print("⚠️ Unclear scan. Press firmly flat against prism.", flush=True)
+                if done:
+                    GLib.timeout_add(50, lambda: [arm(is_rearm=True), False][1])
+
+        elif signal_name == "VerifyFingerSelected":
+            f_name = parameters.unpack()[0]
+            print(f"   Selected finger profile: \033[1;35m{f_name}\033[0m")
+
+    sid = proxy.connect("g-signal", on_verify_status)
+
+    try:
+        print("👉 Press your enrolled finger on the sensor...\n")
+        arm(is_rearm=False)
+        loop.run()
+    finally:
+        try:
+            proxy.VerifyStop()
+        except Exception:
+            pass
+        try:
+            proxy.Release()
+        except Exception:
+            pass
+        proxy.disconnect(sid)
+
+
+def clear_device_fingers(bus, username: str, target: str):
+    path = resolve_device_path(bus, target)
+    if not path:
+        print("❌ Device not found.")
+        sys.exit(1)
+
+    proxy = get_device_proxy(bus, path)
+    name = proxy.get_cached_property("name").get_string()
+
+    try:
+        proxy.Claim("(s)", username)
+        proxy.DeleteEnrolledFingers("(s)", username)
+        proxy.Release()
+        print(f"\n🗑️  Successfully deleted all enrolled fingerprints on \033[1;34m{name}\033[0m.\n")
+    except Exception as e:
+        print(f"❌ Failed to delete prints: {e}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Digital Persona & Multi-Device Biometric Manager")
+    subparsers = parser.add_subparsers(dest="command")
+
+    # list
+    subparsers.add_parser("list", help="List sensors, physics, and enrolled fingerprints")
+
+    # enroll
+    enroll_parser = subparsers.add_parser("enroll", help="Enroll a fingerprint")
+    enroll_parser.add_argument("--device", choices=["usb", "laptop"], default="usb", help="Target device")
+    enroll_parser.add_argument("--finger", choices=VALID_FINGERS, default="right-index-finger", help="Finger to enroll")
+    enroll_parser.add_argument("--user", default=getpass.getuser(), help="Target username")
+
+    # verify
+    verify_parser = subparsers.add_parser("verify", help="Test fingerprint verification")
+    verify_parser.add_argument("--device", choices=["usb", "laptop", "both"], default="usb", help="Target device")
+    verify_parser.add_argument("--user", default=getpass.getuser(), help="Target username")
+
+    # delete
+    del_parser = subparsers.add_parser("delete", help="Clear fingerprints from a sensor")
+    del_parser.add_argument("--device", choices=["usb", "laptop"], default="usb", help="Target device")
+    del_parser.add_argument("--user", default=getpass.getuser(), help="Target username")
+
+    args = parser.parse_args()
+    bus = get_bus()
+
+    if args.command == "list" or not args.command:
+        list_devices(bus, getpass.getuser())
+    elif args.command == "enroll":
+        enroll_finger(bus, args.user, args.device, args.finger)
+    elif args.command == "verify":
+        verify_finger(bus, args.user, args.device)
+    elif args.command == "delete":
+        clear_device_fingers(bus, args.user, args.device)
+
+
+if __name__ == "__main__":
+    main()
