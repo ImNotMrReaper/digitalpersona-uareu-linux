@@ -1,5 +1,64 @@
-build/
-*.pyc
+# ==============================================================================
+# Sensitive Personal Data, Biometrics & Security Credentials
+# ==============================================================================
+
+# User Biometric Fingerprint Templates & Raw Minutiae Scans (Private Data)
+*.fprint
+*.minutiae
+*.raw
+*.bir
+*.fmr
+*.dat
+*.npy
+
+# Cryptographic Keys & Secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.asc
+*.gpg
+
+# Environment Variables, Secrets & Credentials
+.env
+.env.*
+*.env
+*.secret
+*.secrets
+secrets/
+*credential*
+token.json
+*.token
+
+# Python Artifacts & Caches
 __pycache__/
+*.py[cod]
+*$py.class
 *.swp
+*.swo
 *.bak*
+*~
+.pytest_cache/
+.venv/
+venv/
+
+# Local Logs & Databases
+*.log
+logs/
+*.db
+*.sqlite*
+scratch/
+tmp/
+temp/
+
+# Build Directories
+build/
+dist/
+
+# IDE, Editor & OS Artifacts
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.agy_link/
