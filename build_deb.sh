@@ -7,7 +7,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build/deb"
-VERSION="1.0.0"
+VERSION="1.0.2"
 PKG_NAME="dp4500-fingerprint-auth"
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo "amd64")"
 DEB_FILE="${PKG_NAME}_${VERSION}_${ARCH}.deb"

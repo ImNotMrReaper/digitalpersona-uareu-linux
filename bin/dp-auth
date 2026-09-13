@@ -80,7 +80,7 @@ def is_lid_closed() -> bool:
 
 def main():
     username = get_target_user()
-    timeout_sec = int(os.environ.get("DP_AUTH_TIMEOUT", "30"))
+    timeout_sec = int(os.environ.get("DP_AUTH_TIMEOUT", "20"))
 
     try:
         bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
@@ -104,6 +104,8 @@ def main():
     exit_code = [1]
     matched_finger = [""]
     active_devices = {}
+    failed_attempts = [0]
+    MAX_ATTEMPTS = 5
 
     def disarm_device(path, release=True):
         if path in active_devices:
@@ -202,7 +204,17 @@ def main():
                 return
 
             elif result == "verify-no-match":
-                print(f"⚠️ Fingerprint did not match on {friendly}. Sensor relit — try scanning again!", flush=True)
+                failed_attempts[0] += 1
+                remaining = max(0, MAX_ATTEMPTS - failed_attempts[0])
+                if failed_attempts[0] >= MAX_ATTEMPTS:
+                    print(f"⚠️ Fingerprint did not match on {friendly} (Attempt {failed_attempts[0]}/{MAX_ATTEMPTS}).", flush=True)
+                    print("🔒 Maximum fingerprint attempts reached (5/5). Defaulting to password...", flush=True)
+                    exit_code[0] = 1
+                    cleanup()
+                    loop.quit()
+                    return
+                else:
+                    print(f"⚠️ Fingerprint did not match on {friendly} ({remaining} attempts remaining). Sensor relit — try scanning again!", flush=True)
 
             elif result == "verify-retry-scan":
                 hint = "press finger firmly flat against illuminated prism" if is_optical else "touch firmly"
@@ -331,6 +343,8 @@ def main():
         pass
 
     def on_timeout():
+        print("⏱️ Fingerprint scan timed out. Defaulting to password...", flush=True)
+        exit_code[0] = 1
         cleanup()
         loop.quit()
         return False

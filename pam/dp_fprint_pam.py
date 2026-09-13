@@ -21,41 +21,53 @@ def doAuth(pamh):
         if not os.path.isfile(bin_path):
             bin_path = "/usr/local/bin/reaper-fprint-auth"
 
-        proc = subprocess.Popen(
-            [bin_path, user],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                [bin_path, user],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
 
-        for line in iter(proc.stdout.readline, ''):
-            clean_line = line.strip()
-            if clean_line:
+            for line in iter(proc.stdout.readline, ''):
+                clean_line = line.strip()
+                if clean_line:
+                    try:
+                        pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, clean_line))
+                    except Exception:
+                        pass
+
+            proc.wait()
+            status = proc.returncode
+
+            if status == 0:
                 try:
-                    pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, clean_line))
+                    pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, "Fingerprint approved."))
                 except Exception:
                     pass
-
-        proc.wait()
-        status = proc.returncode
-
-        if status == 0:
-            try:
-                pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, "Fingerprint approved."))
-            except Exception:
-                pass
-            syslog.syslog(syslog.LOG_INFO, "Fingerprint approved for " + str(user))
-            syslog.closelog()
-            return pamh.PAM_SUCCESS
-        elif status == 2:
-            syslog.syslog(syslog.LOG_INFO, "No enrolled fingerprints for " + str(user))
-            syslog.closelog()
-            return pamh.PAM_AUTHINFO_UNAVAIL
-        else:
-            syslog.syslog(syslog.LOG_INFO, "Fingerprint authentication failed or timed out for " + str(user))
-            syslog.closelog()
-            return pamh.PAM_AUTH_ERR
+                syslog.syslog(syslog.LOG_INFO, "Fingerprint approved for " + str(user))
+                syslog.closelog()
+                return pamh.PAM_SUCCESS
+            elif status == 2:
+                syslog.syslog(syslog.LOG_INFO, "No enrolled fingerprints for " + str(user))
+                syslog.closelog()
+                return pamh.PAM_AUTHINFO_UNAVAIL
+            else:
+                syslog.syslog(syslog.LOG_INFO, "Fingerprint authentication failed or timed out for " + str(user))
+                syslog.closelog()
+                return pamh.PAM_AUTH_ERR
+        finally:
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
 
     except Exception as e:
         syslog.syslog(syslog.LOG_ERR, "Execution error: " + str(e))
