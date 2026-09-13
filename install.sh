@@ -24,8 +24,23 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 TARGET_USER="${SUDO_USER:-$USER}"
+
+# Auto-clone repository if executed directly from curl/pipe
+if [ ! -d "${SCRIPT_DIR}/src" ] || [ ! -f "${SCRIPT_DIR}/src/libfprint_bz3_override.c" ]; then
+    echo ">>> Running from remote pipe. Cloning latest repository..."
+    TMP_CLONE="$(mktemp -d /tmp/dp4500-install.XXXXXX)"
+    if ! command -v git >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git;
+        elif command -v dnf >/dev/null 2>&1; then dnf install -y git;
+        elif command -v pacman >/dev/null 2>&1; then pacman -Sy --needed --noconfirm git;
+        elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install git; fi
+    fi
+    git clone --depth 1 https://github.com/ImNotMrReaper/digitalpersona-uareu-linux.git "${TMP_CLONE}"
+    SCRIPT_DIR="${TMP_CLONE}"
+    trap "rm -rf '${TMP_CLONE}'" EXIT
+fi
 
 echo -e "\n${BLUE}>>> Step 1: Detecting Package Manager & Installing Dependencies...${RESET}"
 if command -v apt-get >/dev/null 2>&1; then
@@ -40,6 +55,9 @@ elif command -v dnf >/dev/null 2>&1; then
 elif command -v pacman >/dev/null 2>&1; then
     echo -e "    Detected Arch Linux distribution."
     pacman -S --needed --noconfirm fprintd libfprint gcc glib2 python-gobject
+elif command -v zypper >/dev/null 2>&1; then
+    echo -e "    Detected openSUSE distribution."
+    zypper --non-interactive install fprintd libfprint-2-2 gcc glib2-devel python3-gobject || true
 else
     echo -e "${YELLOW}⚠️  Unknown package manager. Please ensure fprintd, libfprint, and gcc are installed.${RESET}"
 fi
@@ -112,3 +130,13 @@ echo -e "  ${PURPLE}dp-fingerprint enroll${RESET}        - Enroll a finger on th
 echo -e "  ${PURPLE}dp-fingerprint verify${RESET}        - Test live verification on the USB scanner"
 echo -e "  ${PURPLE}dp-auth${RESET}                      - Test concurrent multi-sensor authentication"
 echo -e ""
+
+# Interactive enrollment prompt if attached to a terminal
+if [ -t 0 ] || [ -r /dev/tty ]; then
+    echo -ne "\033[1;33mWould you like to enroll a fingerprint now on your scanner? [Y/n]: \033[0m"
+    read -r ENROLL_PROMPT < /dev/tty || ENROLL_PROMPT="y"
+    if [[ "$ENROLL_PROMPT" =~ ^[Yy]?$ ]]; then
+        echo -e "\nStarting interactive fingerprint enrollment for \033[1m${TARGET_USER}\033[0m...\n"
+        dp-fingerprint enroll || true
+    fi
+fi

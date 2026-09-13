@@ -29,26 +29,25 @@ Stock Linux `fprintd` and `libfprint` struggle with optical USB readers out-of-t
 
 ---
 
-## 🚀 Quick Start & Installation
+## 🚀 Quick Start (1-Line Installation)
 
-### Option 1: Install via Debian Package (`.deb`)
-*Ideal for Ubuntu Desktop, Ubuntu Server, Debian, Linux Mint, and Pop!_OS.*
+Install, build, and configure the driver and multi-sensor authentication engine in a single command across Ubuntu, Debian, Fedora, Arch Linux, and openSUSE:
 
 ```bash
-# 1. Install the debian package
-sudo dpkg -i dp4500-fingerprint-auth_1.0.0_amd64.deb
-
-# 2. Resolve any missing package dependencies automatically
-sudo apt-get install -f
+curl -fsSL https://raw.githubusercontent.com/ImNotMrReaper/digitalpersona-uareu-linux/main/install.sh | sudo bash
 ```
 
-### Option 2: Universal Source Installer (`install.sh`)
-*Works on any Linux distribution (Ubuntu, Debian, Fedora, Arch, RHEL).*
-
+### Option 2: Manual Source Installation
 ```bash
 git clone https://github.com/ImNotMrReaper/digitalpersona-uareu-linux.git
 cd digitalpersona-uareu-linux
 sudo ./install.sh
+```
+
+### Option 3: Pre-Compiled Debian Package (`.deb`)
+```bash
+sudo dpkg -i dp4500-fingerprint-auth_1.0.0_amd64.deb
+sudo apt-get install -f
 ```
 
 ---
