@@ -62,3 +62,6 @@ dist/
 .DS_Store
 Thumbs.db
 .agy_link/
+
+# Debian packages — use GitHub Releases instead
+*.deb
